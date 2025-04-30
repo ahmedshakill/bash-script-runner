@@ -2,7 +2,7 @@
     "name": "bash-script-runner",
     "displayName": "Bash Script Runner",
     "description": "Run bash commands directly from your editor",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "publisher": "ahmedshakill",
     "repository": {"url":"https://github.com/ahmedshakill/bash-script-runner.git"},
     "engines": {

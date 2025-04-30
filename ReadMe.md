@@ -1,4 +1,3 @@
-// README.md - Extension documentation
 # Bash Runner VS Code Extension
 
 This extension adds run buttons next to bash commands in your files, allowing you to execute them directly without copying and pasting into a terminal.
@@ -12,7 +11,7 @@ This extension adds run buttons next to bash commands in your files, allowing yo
 ## Usage
 
 1. Open any file containing bash commands
-2. Click on the ▶️ button next to any command to run it
+2. Excercise CTRL+ENTER next to any command to run it
 3. Commands will be executed in a terminal (existing or new)
 
 ## Extension Settings
