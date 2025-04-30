@@ -1,3 +1,5 @@
+// Updated extension.ts with gutter-only button implementation
+
 import * as vscode from 'vscode';
 import { CommandParser } from './commandParser';
 import { TerminalManager } from './terminalManager';
@@ -12,35 +14,88 @@ export function activate(context: vscode.ExtensionContext) {
     commandParser = new CommandParser();
     terminalManager = new TerminalManager();
     
-    // Register the command to run bash commands
-    let disposable = vscode.commands.registerCommand('bash-runner.runCommand', (command: string) => {
+    // Register command to run bash commands from decoration click
+    let runCommandDisposable = vscode.commands.registerCommand('bash-runner.runCommand', (command: string) => {
         terminalManager.executeCommand(command);
     });
     
-    context.subscriptions.push(disposable);
+    // Register command for Ctrl+Enter keyboard shortcut
+    let runSelectedCommandDisposable = vscode.commands.registerCommand('bash-runner.runSelectedCommand', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const document = editor.document;
+            const selection = editor.selection;
+            
+            // Find and run the command at the current cursor position
+            const commands = commandParser.parseCommands(document.getText());
+            for (const command of commands) {
+                const startPos = document.positionAt(command.startOffset);
+                const endPos = document.positionAt(command.endOffset);
+                const commandRange = new vscode.Range(startPos, endPos);
+                
+                if (commandRange.contains(selection)) {
+                    terminalManager.executeCommand(command.text);
+                    break;
+                }
+            }
+        }
+    });
     
-    // Initial decoration for active editor
-    if (vscode.window.activeTextEditor) {
-        updateDecorations(vscode.window.activeTextEditor);
+    // Register a command to handle gutter clicks
+    let handleGutterClickDisposable = vscode.commands.registerCommand('bash-runner.handleGutterClick', (line: number) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const document = editor.document;
+            const commands = commandParser.parseCommands(document.getText());
+            
+            for (const command of commands) {
+                const startPos = document.positionAt(command.startOffset);
+                
+                if (startPos.line === line) {
+                    terminalManager.executeCommand(command.text);
+                    break;
+                }
+            }
+        }
+    });
+    
+    context.subscriptions.push(runCommandDisposable, runSelectedCommandDisposable, handleGutterClickDisposable);
+    
+    // Initial decoration for active editor if it's a shell script
+    if (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.languageId === 'shellscript') {
+        updateDecorations(context, vscode.window.activeTextEditor);
     }
     
     // Update decorations when active editor changes
     vscode.window.onDidChangeActiveTextEditor(editor => {
-        if (editor) {
-            updateDecorations(editor);
+        if (editor && editor.document.languageId === 'shellscript') {
+            updateDecorations(context, editor);
         }
     }, null, context.subscriptions);
     
     // Update decorations when document changes
     vscode.workspace.onDidChangeTextDocument(event => {
         const editor = vscode.window.activeTextEditor;
-        if (editor && event.document === editor.document) {
-            updateDecorations(editor);
+        if (editor && event.document === editor.document && editor.document.languageId === 'shellscript') {
+            updateDecorations(context, editor);
+        }
+    }, null, context.subscriptions);
+
+    // Listen for mouse clicks in the gutter area
+    vscode.window.onDidChangeTextEditorSelection(event => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document.languageId === 'shellscript') {
+            const clickedPosition = event.selections[0].start;
+            
+            // Check if clicked in gutter area (character position 0)
+            if (clickedPosition.character === 0) {
+                vscode.commands.executeCommand('bash-runner.handleGutterClick', clickedPosition.line);
+            }
         }
     }, null, context.subscriptions);
 }
 
-function updateDecorations(editor: vscode.TextEditor) {
+function updateDecorations(context: vscode.ExtensionContext, editor: vscode.TextEditor) {
     const text = editor.document.getText();
     const commands = commandParser.parseCommands(text);
     
@@ -51,58 +106,34 @@ function updateDecorations(editor: vscode.TextEditor) {
     
     // Create new decorations for each command
     commands.forEach((command, index) => {
-        const decorationType = getOrCreateDecorationType(index.toString());
+        const decorationType = getOrCreateDecorationType(context, index.toString());
         
         const startPos = editor.document.positionAt(command.startOffset);
         const endPos = editor.document.positionAt(command.endOffset);
-        const range = new vscode.Range(startPos, endPos);
+        const range = new vscode.Range(startPos, startPos.with(undefined, startPos.character + 1));
         
         editor.setDecorations(decorationType, [{
             range,
-            renderOptions: {
-                before: {
-                    contentText: '▶️',
-                    backgroundColor: '#2979FF',
-                    color: 'white',
-                    width: '16px',
-                    height: '16px',
-                    border: '4px',
-                    margin: '0 5px 0 0'
-                }
-            },
             hoverMessage: `Click to run: ${command.text.trim()}`
         }]);
     });
 }
 
-function getOrCreateDecorationType(id: string): vscode.TextEditorDecorationType {
+function getOrCreateDecorationType(context: vscode.ExtensionContext, id: string): vscode.TextEditorDecorationType {
     if (!decorationTypes[id]) {
-        decorationTypes[id] = vscode.window.createTextEditorDecorationType({
-            rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen,
-            textDecoration: 'none; cursor: pointer;',
-        });
-        
-        // Add click handler for this decoration
-        vscode.window.onDidChangeTextEditorSelection(event => {
-            const clickedPosition = event.selections[0].start;
-            const editor = vscode.window.activeTextEditor;
-            
-            if (editor) {
-                const text = editor.document.getText();
-                const commands = commandParser.parseCommands(text);
-                
-                commands.forEach(command => {
-                    const startPos = editor.document.positionAt(command.startOffset);
-                    const buttonEndPos = new vscode.Position(startPos.line, startPos.character + 1);
-                    
-                    if (clickedPosition.line === startPos.line && 
-                        clickedPosition.character >= startPos.character - 2 && 
-                        clickedPosition.character <= buttonEndPos.character) {
-                        vscode.commands.executeCommand('bash-runner.runCommand', command.text);
-                    }
-                });
-            }
-        });
+        try {
+            decorationTypes[id] = vscode.window.createTextEditorDecorationType({
+                gutterIconPath: context.asAbsolutePath('resources/play-button.svg'),
+                gutterIconSize: '75%'
+            });
+        } catch (error) {
+            console.error('Error creating decoration type:', error);
+            // Fallback decoration type without gutter icon
+            decorationTypes[id] = vscode.window.createTextEditorDecorationType({
+                backgroundColor: 'rgba(41, 121, 255, 0.1)',
+                isWholeLine: true
+            });
+        }
     }
     
     return decorationTypes[id];
@@ -113,3 +144,20 @@ export function deactivate() {
     Object.values(decorationTypes).forEach(type => type.dispose());
     decorationTypes = {};
 }
+
+// Also ensure package.json has these entries:
+/*
+"contributes": {
+  "commands": [
+    {
+      "command": "bash-runner.runCommand",
+      "title": "Run Bash Command"
+    },
+    {
+      "command": "bash-runner.handleGutterClick",
+      "title": "Handle Gutter Click"
+    }
+  ],
+  ...
+}
+*/
